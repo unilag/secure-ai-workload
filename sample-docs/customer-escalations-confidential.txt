@@ -1,0 +1,7 @@
+CONFIDENTIAL - Customer escalations, Q3 (fictional data)
+
+Customer: Jordan Rivera, email jordan.rivera@example.com, phone 555-0142
+Issue: billing dispute on invoice 88231, refund of $1,240 approved.
+
+Customer: Priya Shah, email priya.shah@example.com, phone 555-0187
+Issue: account locked after failed logins, identity verified by phone.

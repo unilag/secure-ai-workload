@@ -1,0 +1,12 @@
+# Terraform state and build output - never commit these
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+terraform/build/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
