@@ -149,12 +149,17 @@ resource "aws_apigatewayv2_route" "ask" {
   api_id    = aws_apigatewayv2_api.http.id
   route_key = "POST /ask"
   target    = "integrations/${aws_apigatewayv2_integration.qa.id}"
+  authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.http.id
   name        = "$default"
   auto_deploy = true
+  default_route_settings {
+    throttling_rate_limit  = 2
+    throttling_burst_limit = 5
+  }
 }
 
 resource "aws_lambda_permission" "apigw" {
