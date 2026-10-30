@@ -6,29 +6,9 @@
 
 A small question-answering API. An authenticated client sends a question; a Lambda function reads a few documents from S3, sends them with the question to a model in Amazon Bedrock, and returns a plain-text answer with source names. No vector database, no agent tools and no fine-tuning in v1.
 
-```mermaid
-flowchart LR
-    client["API client"] -->|"HTTPS + auth"| apigw["API Gateway<br/>auth + throttling"]
+![Target architecture: API Gateway, Lambda in a private subnet with VPC endpoints, Amazon Bedrock with Guardrails, S3, CloudWatch Logs, KMS, CloudTrail, and GitHub Actions deploying through an OIDC role](architecture.svg)
 
-    subgraph vpc["VPC: private subnets, no internet route"]
-        lambda["Lambda<br/>Q&A function"]
-        vpce["VPC endpoints<br/>Bedrock, S3, KMS, Logs"]
-    end
-
-    apigw --> lambda
-    lambda --> vpce
-    vpce --> bedrock["Amazon Bedrock<br/>model + Guardrails"]
-    vpce --> docs[("S3: documents<br/>KMS encrypted")]
-    vpce --> cwlogs[("CloudWatch Logs<br/>data protection policy")]
-    bedrock -->|"invocation logs"| invlogs[("S3: invocation logs<br/>KMS encrypted")]
-
-    kms["KMS customer-managed key"] -.->|"encrypts"| docs
-    kms -.->|"encrypts"| invlogs
-    kms -.->|"encrypts"| cwlogs
-
-    gha["GitHub Actions"] -->|"OIDC role, no stored keys"| deploy["Terraform + Checkov"]
-    trail["CloudTrail"] -.->|"audits all API calls"| bedrock
-```
+*Icons: [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/), 01/30/2026 release. Editable source: `architecture.svg`; image copy: `architecture.png`.*
 
 **Trust boundaries:** (1) internet to API Gateway, (2) API Gateway to the VPC, (3) VPC to managed AWS services, (4) CI/CD to the AWS account.
 
