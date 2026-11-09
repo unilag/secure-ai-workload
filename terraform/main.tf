@@ -92,6 +92,16 @@ resource "aws_iam_role_policy" "lambda_least_privilege" {
         ]
         Resource = "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.name_prefix}-*"
       }
+            ,{
+        Sid    = "VPCAccess"
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DeleteNetworkInterface"
+        ]
+        Resource = "*"
+      }
     ]
   })
 }
@@ -122,6 +132,10 @@ resource "aws_lambda_function" "qa" {
       DOCS_BUCKET = aws_s3_bucket.docs.id
       MODEL_ID    = var.model_id
     }
+  }
+  vpc_config {
+    subnet_ids         = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+    security_group_ids = [aws_security_group.vpce.id]
   }
 }
 
@@ -309,4 +323,100 @@ resource "aws_cloudfront_distribution" "api" {
   viewer_certificate {
     cloudfront_default_certificate = true
   }
+}
+# ---------- VPC (private network for Lambda) ----------
+
+# The VPC — a private network isolated from the internet
+resource "aws_vpc" "main" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true    # Required for VPC endpoints
+  enable_dns_hostnames = true    # Required for VPC endpoints
+
+  tags = { Name = "${var.name_prefix}-vpc" }
+}
+
+# Two private subnets in different AZs for high availability
+resource "aws_subnet" "private_a" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.1.0/24"
+  availability_zone = "${var.region}a"
+
+  tags = { Name = "${var.name_prefix}-private-a" }
+}
+
+resource "aws_subnet" "private_b" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.2.0/24"
+  availability_zone = "${var.region}b"
+
+  tags = { Name = "${var.name_prefix}-private-b" }
+}
+
+# Route table with NO internet route — keeps subnets truly private
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  tags = { Name = "${var.name_prefix}-private-rt" }
+}
+
+resource "aws_route_table_association" "private_a" {
+  subnet_id      = aws_subnet.private_a.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "private_b" {
+  subnet_id      = aws_subnet.private_b.id
+  route_table_id = aws_route_table.private.id
+}
+
+# Security group for VPC endpoints — allows HTTPS from within the VPC
+resource "aws_security_group" "vpce" {
+  name_prefix = "${var.name_prefix}-vpce-"
+  vpc_id      = aws_vpc.main.id
+  description = "Allow Lambda to reach VPC endpoints"
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.main.cidr_block]
+    description = "HTTPS from VPC"
+  }
+
+  tags = { Name = "${var.name_prefix}-vpce" }
+}
+
+# ---------- VPC Endpoints (private paths to AWS services) ----------
+
+# S3 gateway endpoint — free, uses route tables instead of ENIs
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id          = aws_vpc.main.id
+  service_name    = "com.amazonaws.${var.region}.s3"
+  route_table_ids = [aws_route_table.private.id]
+
+  tags = { Name = "${var.name_prefix}-s3-endpoint" }
+}
+
+# Bedrock interface endpoint — creates ENIs in the private subnets
+resource "aws_vpc_endpoint" "bedrock" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.region}.bedrock-runtime"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  security_group_ids  = [aws_security_group.vpce.id]
+  private_dns_enabled = true   # SDK calls resolve to private endpoint automatically
+
+  tags = { Name = "${var.name_prefix}-bedrock-endpoint" }
+}
+
+# CloudWatch Logs interface endpoint
+resource "aws_vpc_endpoint" "logs" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.region}.logs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  security_group_ids  = [aws_security_group.vpce.id]
+  private_dns_enabled = true
+
+  tags = { Name = "${var.name_prefix}-logs-endpoint" }
 }
