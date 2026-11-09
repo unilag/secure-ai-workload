@@ -6,6 +6,8 @@
 # session: the API below has no authentication and calls a paid model.
 # =============================================================================
 
+data "aws_caller_identity" "current" {}
+
 resource "random_id" "suffix" {
   byte_length = 4
 }
@@ -13,6 +15,7 @@ resource "random_id" "suffix" {
 locals {
   name = "${var.name_prefix}-${random_id.suffix.hex}"
 }
+
 
 # -----------------------------------------------------------------------------
 # Documents bucket
@@ -60,24 +63,24 @@ resource "aws_iam_role" "lambda" {
   })
 }
 
-resource "aws_iam_role_policy" "lambda_wide_open" {
-  name = "wide-open"
+resource "aws_iam_role_policy" "lambda_least_privilege" {
+  name = "least-privilege"
   role = aws_iam_role.lambda.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "InsecureBedrockWildcard"
+        Sid      = "InvokeOneModel"
         Effect   = "Allow"
-        Action   = "bedrock:*"
-        Resource = "*"
+        Action   = "bedrock:InvokeModel"
+        Resource = "arn:aws:bedrock:${var.region}::foundation-model/${var.model_id}"
       },
       {
-        Sid      = "InsecureS3Wildcard"
-        Effect   = "Allow"
-        Action   = "s3:*"
-        Resource = "*"
+        Sid    = "ReadDocsBucket"
+        Effect = "Allow"
+        Action = "s3:GetObject"
+        Resource = "${aws_s3_bucket.docs.arn}/*"
       },
       {
         Sid    = "Logs"
@@ -87,7 +90,7 @@ resource "aws_iam_role_policy" "lambda_wide_open" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "*"
+        Resource = "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.name_prefix}-*"
       }
     ]
   })
