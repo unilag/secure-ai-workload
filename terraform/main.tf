@@ -138,11 +138,32 @@ resource "aws_lambda_function" "qa" {
     security_group_ids = [aws_security_group.vpce.id]
   }
 }
+resource "aws_s3_bucket_versioning" "docs" {
+  bucket = aws_s3_bucket.docs.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "docs" {
+  bucket = aws_s3_bucket.docs.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.main.arn
+    }
+    bucket_key_enabled = true
+  }
+}
 
 # INSECURE: no retention, no KMS encryption, no data protection policy, so
 # personal data in logged prompts is stored in plain text forever (LLM02).
+
 resource "aws_cloudwatch_log_group" "qa" {
   name = "/aws/lambda/${aws_lambda_function.qa.function_name}"
+  kms_key_id        = aws_kms_key.main.arn
 }
 
 # -----------------------------------------------------------------------------
@@ -419,4 +440,54 @@ resource "aws_vpc_endpoint" "logs" {
   private_dns_enabled = true
 
   tags = { Name = "${var.name_prefix}-logs-endpoint" }
+}
+
+
+# ---------- KMS (encryption at rest) ----------
+
+resource "aws_kms_key" "main" {
+  description             = "${var.name_prefix} encryption key"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+
+  tags = { Name = "${var.name_prefix}-key" }
+}
+
+resource "aws_kms_alias" "main" {
+  name          = "alias/${var.name_prefix}-key"
+  target_key_id = aws_kms_key.main.key_id
+}
+
+resource "aws_kms_key_policy" "main" {
+  key_id = aws_kms_key.main.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnableRootAccountAccess"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowCloudWatchLogs"
+        Effect    = "Allow"
+        Principal = { Service = "logs.${var.region}.amazonaws.com" }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+        Condition = {
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:log-group:*"
+          }
+        }
+      }
+    ]
+  })
 }
